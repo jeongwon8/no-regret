@@ -182,31 +182,34 @@ export default function App() {
 }
 
 // ---------------- Header ----------------
-function Header({ t, lang, setLang, email, onLogout }: any) {
+import donut from "./assets/logo-donut.png";
+import { useI18n } from "./i18n";
+
+const Header: React.FC = () => {
+  const { t, locale, setLocale } = useI18n();
+
   return (
-    <header className="px-5 py-3 border-b border-zinc-200 flex items-center justify-between">
-      <div>
-        <div className="text-lg font-semibold">
-          {t.appName} <span className="text-zinc-400 text-sm">/ No Regret</span>
+    <header className="flex items-start gap-2.5 px-5 py-3 border-b border-slate-200 rounded-t-3xl bg-white">
+      <img src={donut} alt="No Regret logo" className="h-6 w-6 mt-[2px] object-contain" />
+      <div className="leading-tight">
+        <div className="text-[20px] font-semibold tracking-tight text-slate-900">
+          {t("header.title")}
         </div>
-        <div className="text-xs text-zinc-500">{t.appSlogan}</div>
+        <div className="text-[13px] text-slate-500">
+          {t("header.subtitle")}
+        </div>
       </div>
-      <div className="flex items-center gap-2">
-        <button
-          onClick={() => setLang((l: any) => (l === "ko" ? "en" : "ko"))}
-          className="px-2 py-1 text-xs rounded-full border border-zinc-300 hover:bg-zinc-100"
-        >
-          {lang.toUpperCase()}
-        </button>
-        {email && (
-          <button onClick={onLogout} className="px-2 py-1 text-xs rounded-full border border-zinc-300 hover:bg-zinc-100">
-            {t.logout}
-          </button>
-        )}
-      </div>
+      <button
+        onClick={() => setLocale(locale === "ko" ? "en" : "ko")}
+        className="ml-auto inline-flex items-center rounded-full border px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+        aria-label="Change language"
+      >
+        {t("header.badge")}
+      </button>
     </header>
   );
-}
+};
+
 
 // ---------------- Join ----------------
 function JoinCard({ t, onJoin }: any) {
