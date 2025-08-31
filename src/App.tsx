@@ -1,4 +1,6 @@
+import { createPortal } from "react-dom";
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import donut from "./assets/logo-donut.png";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell
@@ -131,10 +133,12 @@ const LS_USER = "nr_user";
 const LS_TODAY = "nr_today"; // {date: string, items: {id,title,done,cat}[]}
 const LS_MSGS = "nr_msgs"; // {email,text,ts}
 
+
 // ---------------- Types ----------------
 interface Msg { email: string; text: string; ts: number }
 interface Plan { id: string; title: string; done: boolean; cat: string }
 interface TodayData { date: string; items: Plan[] }
+
 
 // ---------------- Main App ----------------
 export default function App() {
@@ -158,54 +162,75 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-svh w-full flex items-center justify-center bg-gradient-to-b from-zinc-50 to-emerald-50">
+    <div className="min-h-[100svh] w-full overflow-hidden flex items-center justify-center bg-gradient-to-b from-zinc-50 to-emerald-50 px-5">
       {/* 메인 카드 */}
-      <div className="relative w-[390px] max-w-full h-svh bg-white/90 backdrop-blur rounded-3xl shadow-2xl border border-zinc-200 flex flex-col pb-20">
-        <Header t={t} lang={lang} setLang={setLang} email={email} onLogout={onLogout} />
-        <main className="flex-1 overflow-y-auto p-4">
-          {!email ? (
-            <JoinCard t={t} onJoin={onJoin} />
-          ) : tab === "chat" ? (
-            <Chat t={t} email={email} />
+      <div className="relative w-full max-w-[390px] h-[100svh] bg-white/90 backdrop-blur rounded-3xl shadow-2xl border border-zinc-200 flex flex-col">
+        <Header lang={lang} setLang={setLang} email={email} onLogout={onLogout} />
+  
+        {/* 콘텐츠만 스크롤 */}
+        <main className="flex-1 overflow-y-auto overscroll-y-contain px-5 p-4">
+          {tab === "chat" ? (
+            <Chat t={t} />
           ) : tab === "today" ? (
             <Today t={t} />
           ) : (
             <History t={t} />
           )}
         </main>
+  
+        {/* ✅ 카드 하단 고정 탭바 (일반 흐름) */}
+        <TabBar t={t} tab={tab} setTab={setTab} />
       </div>
-
-      {/* 카드 바깥에 탭바 고정 */}
-      <TabBar t={t} tab={tab} setTab={setTab} />
     </div>
   );
 }
 
 // ---------------- Header ----------------
-import donut from "./assets/logo-donut.png";
-import { useI18n } from "./i18n";
+type HeaderProps = {
+  lang: "ko" | "en";
+  setLang: React.Dispatch<React.SetStateAction<"ko" | "en">>;
+  email: string | null;
+  onLogout: () => void;
+};
 
-const Header: React.FC = () => {
-  const { t, locale, setLocale } = useI18n();
-
+const Header: React.FC<HeaderProps> = ({ lang, setLang, email, onLogout }) => {
   return (
     <header className="flex items-start gap-2.5 px-5 py-3 border-b border-slate-200 rounded-t-3xl bg-white">
-      <img src={donut} alt="No Regret logo" className="h-6 w-6 mt-[2px] object-contain" />
+      {/* 왼쪽: 도넛 아이콘 */}
+      <img
+        src={donut}
+        alt="No Regret logo"
+        className="h-6 w-6 mt-[2px] object-contain"
+      />
+
+      {/* 가운데: 2줄 카피 */}
       <div className="leading-tight">
         <div className="text-[20px] font-semibold tracking-tight text-slate-900">
-          {t("header.title")}
+          no - regret
         </div>
         <div className="text-[13px] text-slate-500">
-          {t("header.subtitle")}
+          완벽한 사람들을 위하여
         </div>
       </div>
-      <button
-        onClick={() => setLocale(locale === "ko" ? "en" : "ko")}
-        className="ml-auto inline-flex items-center rounded-full border px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
-        aria-label="Change language"
-      >
-        {t("header.badge")}
-      </button>
+
+      {/* 오른쪽: 언어 토글 + (로그인 시) 로그아웃 */}
+      <div className="ml-auto flex items-center gap-2">
+        <button
+          onClick={() => setLang(lang === "ko" ? "en" : "ko")}
+          className="inline-flex items-center rounded-full border px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+          aria-label="Change language"
+        >
+          {lang.toUpperCase()}
+        </button>
+        {email && (
+          <button
+            onClick={onLogout}
+            className="inline-flex items-center rounded-full border px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+          >
+            {lang === "ko" ? "로그아웃" : "Log out"}
+          </button>
+        )}
+      </div>
     </header>
   );
 };
@@ -233,32 +258,105 @@ function JoinCard({ t, onJoin }: any) {
 }
 
 // ---------------- Chat ----------------
-function Chat({ t, email }: { t: any; email: string }) {
-  const [msgs, setMsgs] = useState<Msg[]>(() => {
-    const raw = localStorage.getItem(LS_MSGS);
-    return raw ? JSON.parse(raw) : [];
-  });
-  const [text, setText] = useState("");
-  const chRef = useRef<BroadcastChannel | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+type Profile = { email: string | null; nick: string | null };
+type ChatMsg = { email: string | null; nick: string; text: string; ts: number };
 
+const LS_PROFILE = "nr_profile_v1";
+const MAX_LEN = 200;
+const TTL_MS = 10 * 60 * 1000; // 10분
+
+function Chat({ t }: { t: any }) {
+  const [profile, setProfile] = useState<Profile>(() => {
+    const raw = localStorage.getItem(LS_PROFILE);
+    if (!raw) return { email: null, nick: null };
+    try {
+      const p = JSON.parse(raw);
+      // 과거 포맷 호환(email만 저장했던 경우)
+      if (typeof p === "string") return { email: p, nick: null };
+      return { email: p.email ?? null, nick: p.nick ?? null };
+    } catch {
+      return { email: null, nick: null };
+    }
+  });
+
+  const displayName = (profile.nick?.trim() || "익명의 도넛").slice(0, 10);
+
+  // 메시지: 오래된 것부터(상단) → 새로 추가하면 배열 끝에 push
+  const [msgs, setMsgs] = useState<ChatMsg[]>(() => {
+    const raw = localStorage.getItem(LS_MSGS);
+    if (!raw) return [];
+    try {
+      const arr: ChatMsg[] = JSON.parse(raw);
+      const now = Date.now();
+      return arr.filter((m) => now - m.ts <= TTL_MS);
+    } catch {
+      return [];
+    }
+  });
+
+  const [text, setText] = useState("");
+  const listRef = useRef<HTMLDivElement>(null);
+  const chRef = useRef<BroadcastChannel | null>(null);
+
+  // 브로드캐스트 채널 연결
   useEffect(() => {
     chRef.current = new BroadcastChannel("nr_chat");
     chRef.current.onmessage = (ev) => {
-      setMsgs((m) => [...m, ev.data]);
+      const m: ChatMsg = ev.data;
+      setMsgs((prev) => [...prev, m]); // 배열 끝에 추가(= 아래쪽으로 쌓임)
     };
     return () => chRef.current?.close();
   }, []);
 
+  // 저장 + 자동 스크롤 + TTL 정리
   useEffect(() => {
-    localStorage.setItem(LS_MSGS, JSON.stringify(msgs));
-    // auto scroll
+    const now = Date.now();
+    const pruned = msgs.filter((m) => now - m.ts <= TTL_MS);
+    if (pruned.length !== msgs.length) setMsgs(pruned);
+    localStorage.setItem(LS_MSGS, JSON.stringify(pruned));
+
+    // 아래로 자동 스크롤
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [msgs]);
 
+  // 주기적 TTL 정리
+  useEffect(() => {
+    const id = setInterval(() => {
+      setMsgs((prev) => {
+        const now = Date.now();
+        const pruned = prev.filter((m) => now - m.ts <= TTL_MS);
+        if (pruned.length !== prev.length) localStorage.setItem(LS_MSGS, JSON.stringify(pruned));
+        return pruned;
+      });
+    }, 15_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // 프로필 모달
+  const [showProfile, setShowProfile] = useState(false);
+  const [editEmail, setEditEmail] = useState(profile.email ?? "");
+  const [editNick, setEditNick] = useState(profile.nick ?? "");
+
+  const openProfile = () => {
+    setEditEmail(profile.email ?? "");
+    setEditNick(profile.nick ?? "");
+    setShowProfile(true);
+  };
+
+  const saveProfile = () => {
+    const next: Profile = {
+      email: editEmail.trim() || null,
+      nick: (editNick || "").trim().slice(0, 10) || null,
+    };
+    setProfile(next);
+    localStorage.setItem(LS_PROFILE, JSON.stringify(next));
+    setShowProfile(false);
+  };
+
   const send = () => {
-    if (!text.trim()) return;
-    const m: Msg = { email, text, ts: Date.now() };
+    const t2 = text.trim().slice(0, MAX_LEN);
+    if (!t2) return;
+    const m: ChatMsg = { email: profile.email, nick: displayName, text: t2, ts: Date.now() };
     setMsgs((prev) => [...prev, m]);
     chRef.current?.postMessage(m);
     setText("");
@@ -266,32 +364,87 @@ function Chat({ t, email }: { t: any; email: string }) {
 
   return (
     <div className="flex flex-col h-full">
-      <div ref={listRef} className="flex-1 overflow-y-auto space-y-3">
+      {/* 상단 타이틀 고정 */}
+      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-slate-200 py-2 mb-2">
+        <div className="text-[13px] text-slate-600 px-1">오늘 하루 행복한 사람만 채팅하기</div>
+      </div>
+
+      {/* 채팅 리스트 */}
+      <div ref={listRef} className="flex-1 overflow-y-auto space-y-4 pr-1">
         {msgs.map((m, i) => (
-          <div
-            key={i}
-            className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm shadow-sm ${m.email === email ? "ml-auto bg-emerald-100" : "bg-white border"}`}
-          >
-            <div className="text-[10px] text-zinc-500 mb-0.5">{m.email}</div>
-            <div>{m.text}</div>
+          <div key={i} className="flex items-start gap-2">
+            <img src={donut} alt="" className="h-5 w-5 mt-0.5 object-contain" />
+            <div>
+              <div className="text-[11px] text-slate-500">{m.nick || "익명의 도넛"}</div>
+              <div className="inline-block max-w-[260px] rounded-full border px-3 py-1 text-sm bg-white">
+                {m.text}
+              </div>
+            </div>
           </div>
         ))}
       </div>
-      <div className="mt-3 flex gap-2">
-        <input
-          className="flex-1 px-3 py-2 rounded-xl border focus:outline-none focus:ring-2 focus:ring-emerald-300"
-          placeholder={t.chatPlaceholder}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send()}
-        />
-        <button className="px-4 py-2 rounded-xl bg-zinc-900 text-white" onClick={send}>
-          Send
+
+      {/* 내 정보(닉네임 라벨) + 입력 */}
+      <div className="mt-3">
+        <button
+          onClick={openProfile}
+          className="text-xs text-slate-500 mb-1 hover:underline"
+          aria-label="프로필 설정"
+        >
+          {displayName}
         </button>
+
+        <div className="flex items-center gap-2 p-2 rounded-2xl border bg-white shadow-sm">
+          <img src={donut} alt="" className="h-6 w-6 object-contain" onClick={openProfile} />
+          <input
+            className="flex-1 px-3 py-2 rounded-xl border focus:outline-none focus:ring-2 focus:ring-emerald-300"
+            placeholder={t.chatPlaceholder}
+            value={text}
+            maxLength={MAX_LEN}
+            onChange={(e) => setText(e.target.value.slice(0, MAX_LEN))}
+            onKeyDown={(e) => e.key === "Enter" && send()}
+          />
+          <button className="px-4 py-2 rounded-xl bg-zinc-900 text-white" onClick={send}>
+            Send
+          </button>
+        </div>
+
+        <div className="mt-1 text-[11px] text-slate-400 text-right">{text.length}/{MAX_LEN}</div>
       </div>
+
+      {/* 프로필 모달 (이메일 + 닉네임) */}
+      {showProfile &&
+        createPortal(
+          <div className="fixed inset-0 z-[9999] bg-black/30 flex items-center justify-center p-6">
+            <div className="w-full max-w-[360px] rounded-2xl bg-white border shadow-xl p-4">
+              <div className="text-sm font-medium text-slate-800 mb-3">내 정보</div>
+              <label className="block text-xs text-slate-500 mb-1">이메일</label>
+              <input
+                className="w-full px-3 py-2 rounded-xl border mb-3 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                placeholder="email@example.com"
+                value={editEmail}
+                onChange={(e) => setEditEmail(e.target.value)}
+              />
+              <label className="block text-xs text-slate-500 mb-1">닉네임 (최대 10자)</label>
+              <input
+                className="w-full px-3 py-2 rounded-xl border mb-4 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                placeholder="닉네임"
+                maxLength={10}
+                value={editNick}
+                onChange={(e) => setEditNick(e.target.value)}
+              />
+              <div className="flex justify-end gap-2">
+                <button className="px-3 py-1.5 rounded-lg border" onClick={() => setShowProfile(false)}>취소</button>
+                <button className="px-3 py-1.5 rounded-lg bg-zinc-900 text-white" onClick={saveProfile}>저장</button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
+
 
 // ---------------- Today ----------------
 function Today({ t }: any) {
@@ -415,6 +568,8 @@ function History({ t }: any) {
 }
 
 // ---------------- Tab Bar ----------------
+console.log("TabBar rendered");
+
 function TabBar({ t, tab, setTab }: {
   t: any;
   tab: "chat" | "today" | "history";
@@ -427,19 +582,23 @@ function TabBar({ t, tab, setTab }: {
   ] as const;
 
   return (
-    <nav className="fixed bottom-0 left-0 w-full bg-white/90 backdrop-blur-md shadow-inner">
-      <ul className="mx-auto w-[390px] max-w-full grid grid-cols-3">
-        {tabs.map(({ key, label, Icon }) => (
-          <li key={key}>
-            <button
-              onClick={() => setTab(key)}
-              className={`w-full flex flex-col items-center py-2 ${tab === key ? "opacity-100" : "opacity-70 hover:opacity-100"}`}
-            >
-              <Icon />
-              <span className="text-xs text-zinc-700">{label}</span>
-            </button>
-          </li>
-        ))}
+    <nav className="h-16 shrink-0 flex items-center bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-6px_14px_rgba(0,0,0,0.06)] rounded-b-3xl pb-[env(safe-area-inset-bottom)]">
+      <ul className="mx-auto w-full grid grid-cols-3 gap-0 px-3">
+        {tabs.map(({ key, label, Icon }) => {
+          const selected = tab === key;
+          return (
+            <li key={key} className="flex justify-center">
+              <button
+                onClick={() => setTab(key)}
+                className={`w-full max-w-[110px] flex items-center justify-center gap-2 py-2 rounded-2xl transition
+                  ${selected ? "bg-violet-100 shadow-sm" : "hover:bg-slate-100"}`}
+              >
+                <Icon />
+                <span className="text-xs text-zinc-800">{label}</span>
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </nav>
   );

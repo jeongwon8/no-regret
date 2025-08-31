@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 html, body, #root { height: 100%; }
+body { overflow: hidden; }  /* ✅ 바깥 페이지 스크롤 차단 */
 
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
